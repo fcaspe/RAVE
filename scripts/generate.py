@@ -2,7 +2,6 @@ from absl import app, flags, logging
 import pdb
 import torch, torchaudio, argparse, os, tqdm, re, gin
 import cached_conv as cc
-
 try:
     import rave
 except:
@@ -32,6 +31,8 @@ def get_audio_files(path):
 
 def main(argv):
     torch.set_float32_matmul_precision('high')
+    if(FLAGS.stream is True):
+        print(f'[INFO] Using Cached Conv.')
     cc.use_cached_conv(FLAGS.stream)
 
     model_path = FLAGS.model
@@ -47,6 +48,7 @@ def main(argv):
         is_scripted = True
     else:
         config_path = rave.core.search_for_config(model_path)
+        print(f'Gin config path is {config_path}')
         if config_path is None:
             logging.error('config not found in folder %s'%model_path)
         gin.parse_config_file(config_path)
@@ -72,7 +74,8 @@ def main(argv):
 
     # parse inputs
     audio_files = sum([get_audio_files(f) for f in paths], [])
-    receptive_field = rave.core.get_minimum_size(model)
+    ratio = rave.core.get_minimum_size(model)
+    print(f'[INFO] Compression ratio is {ratio} samples')
 
     progress_bar = tqdm.tqdm(audio_files)
     cc.MAX_BATCH_SIZE = 8
@@ -94,17 +97,23 @@ def main(argv):
             if model.n_channels < x.shape[0]:
                 x = x[:model.n_channels]
             else:
-                print('[Warning] file %s has %d channels, butt model has %d channels ; skipping'%(f, model.n_channels))
+                print('[Warning] file %s has %d channels, but model has %d channels ; skipping'%(f, model.n_channels))
         x = x.to(device)
         if FLAGS.stream:
             if FLAGS.chunk_size:
-                assert FLAGS.chunk_size > receptive_field, "chunk_size must be higher than models' receptive field (here : %s)"%receptive_field
+                #assert FLAGS.chunk_size >= ratio, "chunk_size must be higher than models' compression ratio (here : %s)"%ratio
+                if(FLAGS.chunk_size <= ratio): print('[WARNING] RAVE reccomends a chunk size bigger than compression ratio.')
                 x = list(x.split(FLAGS.chunk_size, dim=-1))
+                print(f'[INFO] Number of Chunks {len(x)} Shape of each one: {x[0].shape}')
                 if x[-1].shape[0] < FLAGS.chunk_size:
+                    #print(f'[INFO] Last one is {x[-1].shape}')
                     x[-1] = torch.nn.functional.pad(x[-1], (0, FLAGS.chunk_size - x[-1].shape[-1]))
+                    #print(f'[INFO] After padding {x[-1].shape}')
                 x = torch.stack(x, 0)
+                print(f'[INFO] Stacked {x.shape}')
             else:
                 x = x[None]
+                print(f'[INFO] No chunk size is disabled {x.shape}')
             
             # forward into model
             out = []
