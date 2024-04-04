@@ -57,6 +57,7 @@ def main(argv):
         if run is None:
             logging.error("run not found in folder %s"%model_path)
         model = model.load_from_checkpoint(run)
+        model = model.eval()
 
     # device
     if FLAGS.gpu >= 0:
@@ -77,6 +78,8 @@ def main(argv):
     ratio = rave.core.get_minimum_size(model)
     print(f'[INFO] Compression ratio is {ratio} samples')
 
+    # clean cache
+    _ = model(torch.zeros(1,1,2**16))
     progress_bar = tqdm.tqdm(audio_files)
     cc.MAX_BATCH_SIZE = 8
 

@@ -64,6 +64,7 @@ def main(argv):
         if run is None:
             logging.error("run not found in folder %s"%model_path)
         model = model.load_from_checkpoint(run)
+        model = model.eval()
 
     # device
     if FLAGS.gpu >= 0:
@@ -97,7 +98,7 @@ def main(argv):
                 logging.warning('could not open file %s.'%f)
                 continue
             # Reset cache
-            empty = torch.zeros(1, 1, 2**14).to(device)
+            empty = torch.zeros(1, 1, 2**16).to(device)
             _ = model(empty)
 
             # LOAD AUDIO TO TENSOR
