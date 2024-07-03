@@ -205,7 +205,9 @@ def get_rave_receptive_field(model, n_channels=1):
         else:
             N *= 2
     left_receptive_field = len(left_grad[left_grad != 0])
+    print(f'Left rec field {left_receptive_field}')
     right_receptive_field = len(right_grad[right_grad != 0])
+    print(f'Right rec field {right_receptive_field}')
     model.zero_grad()
 
     for module in model.modules():

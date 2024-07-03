@@ -83,6 +83,8 @@ def main(argv):
     # parse inputs
     ratio = rave.core.get_minimum_size(model)
     print(f'[INFO] Compression ratio is {ratio} samples')
+    print(f'Encoder CD {model.encoder.encoder.net.cumulative_delay}')
+    print(f'Decoder CD {model.decoder.net.cumulative_delay}')
 
     audio_files = sum([get_audio_files(f) for f in paths], [])
 

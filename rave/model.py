@@ -449,9 +449,8 @@ class RAVE(pl.LightningModule):
             self.receptive_field[0] = lrf
             self.receptive_field[1] = rrf
             print(
-                f"Receptive field: {1000*lrf/self.sr:.2f}ms <-- x --> {1000*rrf/self.sr:.2f}ms"
+                f"Receptive field: {1000*lrf/self.sr:.2f}ms <-- x --> {1000*rrf/self.sr:.2f}ms ( {lrf+rrf} Samples )"
             )
-
         if not len(out): return
 
         audio, z = list(zip(*out))

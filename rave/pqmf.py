@@ -253,6 +253,7 @@ class CachedPQMF(PQMF):
         hki = rearrange(hki, "c (t m) -> m c t", m=self.hk.shape[0])
         hki = make_odd(hki)
 
+        print(f'!!!!!!Forward padding {cc.get_padding(hkf.shape[-1])}')
         self.forward_conv = cc.Conv1d(
             hkf.shape[1],
             hkf.shape[0],
