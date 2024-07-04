@@ -48,7 +48,8 @@ class AudioDataset(data.Dataset):
                  db_path: str,
                  audio_key: str = 'waveform',
                  transforms: Optional[transforms.Transform] = None, 
-                 n_channels: int = 1) -> None:
+                 n_channels: int = 1,
+                 cache: bool = True) -> None:
         super().__init__()
         self._db_path = db_path
         self._audio_key = audio_key
@@ -57,6 +58,8 @@ class AudioDataset(data.Dataset):
         self._transforms = transforms
         self._n_channels = n_channels
         lens = []
+        if cache:
+            self._cache = {}
         with self.env.begin() as txn:
             for k in self.keys:
                ae = AudioExample.FromString(txn.get(k)) 
@@ -67,6 +70,11 @@ class AudioDataset(data.Dataset):
         return len(self.keys)
 
     def __getitem__(self, index):
+        # Check if the item is in the cache
+        if hasattr(self, "_cache"):
+            if index in self._cache:
+                return self._cache[index]
+
         with self.env.begin() as txn:
             ae = AudioExample.FromString(txn.get(self.keys[index]))
 
@@ -79,6 +87,10 @@ class AudioDataset(data.Dataset):
 
         if self._transforms is not None:
             audio = self._transforms(audio)
+
+        # Cache the item if caching is enabled
+        if hasattr(self, "_cache"):
+            self._cache[index] = audio
 
         return audio
 
