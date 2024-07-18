@@ -3,6 +3,7 @@ import pdb
 import torch, torchaudio, argparse, os, tqdm, re, gin
 import cached_conv as cc
 from rave.core import get_rave_receptive_field
+from rave.masker import SpectrogramMasking
 try:
     import rave
 except:
@@ -14,12 +15,7 @@ except:
 FLAGS = flags.FLAGS
 flags.DEFINE_string('model', required=True, default=None, help="model path")
 flags.DEFINE_multi_string('input', required=True, default=None, help="model inputs (file or folder)")
-flags.DEFINE_string('out_path', 'generations', help="output path")
-flags.DEFINE_string('name', None, help="name of the model")
 flags.DEFINE_integer('gpu', default=-1, help='GPU to use')
-flags.DEFINE_bool('stream', default=False, help='simulates streaming mode')
-flags.DEFINE_integer('chunk_size', default=None, help="chunk size for encoding/decoding (default: full file)")
-
 
 def get_audio_files(path):
     audio_files = []
@@ -30,11 +26,11 @@ def get_audio_files(path):
     return audio_files
 
 
+@torch.no_grad()
 def main(argv):
     torch.set_float32_matmul_precision('high')
-    if(FLAGS.stream is True):
-        print(f'[INFO] Using Cached Conv.')
-    cc.use_cached_conv(FLAGS.stream)
+
+    cc.use_cached_conv(False)
 
     model_path = FLAGS.model
     paths = FLAGS.input
@@ -60,10 +56,7 @@ def main(argv):
         model = model.load_from_checkpoint(run)
         model = model.eval()
         pqmf_channels = model.pqmf.forward_conv.weight.shape[0]
-        if FLAGS.stream is True:
-            print(f'[INFO] Cumulative Delay {(model.decoder.cumulative_delay*pqmf_channels)} samples.')
-        #if FLAGS.stream is False:
-        #    get_rave_receptive_field(model)
+
     # device
     if FLAGS.gpu >= 0:
         device = torch.device('cuda:%d'%FLAGS.gpu)
@@ -71,34 +64,29 @@ def main(argv):
     else:
         device = torch.device('cpu')
 
-
-    # make output directories
-    if FLAGS.name is None:
-        FLAGS.name = "_".join(os.path.basename(model_path).split('_')[:-1])
-    out_path = os.path.join(FLAGS.out_path, FLAGS.name)
-    os.makedirs(out_path, exist_ok=True)
-
     # parse inputs
     audio_files = sum([get_audio_files(f) for f in paths], [])
     ratio = rave.core.get_minimum_size(model)
     print(f'[INFO] Compression ratio is {ratio} samples')
 
+    masker = SpectrogramMasking(target_type='relative_power',
+                                pow_times=1,
+                                win_length=8192,
+                                hop_ratio=8192//4,
+                                mask_ratio=0)
     # clean cache
     _ = model(torch.zeros(1,1,2**16))
     progress_bar = tqdm.tqdm(audio_files)
-    cc.MAX_BATCH_SIZE = 8
 
+    audios = []
     for i, (d, f) in enumerate(progress_bar):
-        #TODO reset cache
-            
+
         try:
             x, sr = torchaudio.load(f)
         except: 
             logging.warning('could not open file %s.'%f)
             continue
-        progress_bar.set_description(f)
 
-        # load file
         if sr != model.sr:
             x = torchaudio.functional.resample(x, sr, model.sr)
         if model.n_channels != x.shape[0]:
@@ -106,38 +94,39 @@ def main(argv):
                 x = x[:model.n_channels]
             else:
                 print('[Warning] file %s has %d channels, but model has %d channels ; skipping'%(f, model.n_channels))
+        
+        # Crop audio for length to be multiple of 2048 (maximum compression ratio)
+        x = x[:,x.shape[1]%2048:]
         x = x.to(device)
-        if FLAGS.stream:
-            if FLAGS.chunk_size:
-                #assert FLAGS.chunk_size >= ratio, "chunk_size must be higher than models' compression ratio (here : %s)"%ratio
-                if(FLAGS.chunk_size <= ratio): print('[WARNING] RAVE reccomends a chunk size bigger than compression ratio.')
-                x = list(x.split(FLAGS.chunk_size, dim=-1))
-                print(f'[INFO] Number of Chunks {len(x)} Shape of each one: {x[0].shape}')
-                if x[-1].shape[0] < FLAGS.chunk_size:
-                    #print(f'[INFO] Last one is {x[-1].shape}')
-                    x[-1] = torch.nn.functional.pad(x[-1], (0, FLAGS.chunk_size - x[-1].shape[-1]))
-                    #print(f'[INFO] After padding {x[-1].shape}')
-                x = torch.stack(x, 0)
-                print(f'[INFO] Stacked {x.shape}')
-            else:
-                x = x[None]
-                #print(f'[INFO] No chunk size is disabled {x.shape}')
-            
-            # forward into model
-            out = []
-            for x_chunk in x:
-                x_chunk = x_chunk.to(device)
-                out_tmp = model(x_chunk[None])
-                out.append(out_tmp)
-            out = torch.cat(out, -1)
-        else:
-            out = model.forward(x[None])
+        audios.append(x)
 
-        # save file
-        out_path = re.sub(d, "", f)
-        out_path = os.path.join(FLAGS.out_path, f)
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        torchaudio.save(out_path, out[0].cpu(), sample_rate=model.sr)
+    batches = []
+    for a in audios:
+        if a.shape[-1] > 131072:
+            batches.extend(torch.split(a,split_size_or_sections=131072,dim=-1))
+    
+
+    thresholds = [0,0.001,0.002,0.005,0.01,0.02,0.05,0.1,0.2,0.5,1]
+    # Compute at different threshold levels
+    distances = []
+    for t in thresholds:
+        for audio in batches:
+            masker.mask_ratio = t
+            x = masker(audio)
+            print(f'Masker {x.shape}')
+            out = model.forward(x[None])
+            print(f'Output {out.shape}')
+            distance = model.audio_distance(out,audio.unsqueeze(1))['spectral_distance']
+            print('Distance ',distance)
+            distances.append(distance)
+        d = torch.mean(torch.tensor(distances))
+        print(f'Threshold {t} Distance ',d)
+        distances = []
+    # save table of results as file and plot image
+    #out_path = re.sub(d, "", f)
+    #out_path = os.path.join(FLAGS.out_path, f)
+    #os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    #torchaudio.save(out_path, out[0].cpu(), sample_rate=model.sr)
 
 if __name__ == "__main__": 
     app.run(main)

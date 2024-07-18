@@ -198,6 +198,23 @@ def get_rave_receptive_field(model, n_channels=1):
         assert x.grad is not None, "input has no grad"
 
         grad = x.grad.data.reshape(-1)
+
+        def print_gradient_continuity(grad):
+            # Check gradient continuity
+            grad_check = grad != 0
+            print(f'Test gradient size ',grad_check.shape)
+            counter = 0
+            last_grad = grad_check[0]
+            print(f' at 0 grad is {last_grad}')
+            for g in grad_check:
+                if g == last_grad:
+                    counter += 1
+                else:
+                    print(f' at {counter} change to {g}')
+                    counter = 0
+                    last_grad = g
+        #print_gradient_continuity(grad)
+
         left_grad, right_grad = grad.chunk(2, 0)
         large_enough = (left_grad[0] == 0) and right_grad[-1] == 0
         if large_enough:
