@@ -4,6 +4,7 @@ import torch, torchaudio, argparse, os, tqdm, re, gin
 import cached_conv as cc
 from rave.core import get_rave_receptive_field
 from rave.masker import SpectrogramMasking
+import numpy
 try:
     import rave
 except:
@@ -15,6 +16,7 @@ except:
 FLAGS = flags.FLAGS
 flags.DEFINE_string('model', required=True, default=None, help="model path")
 flags.DEFINE_multi_string('input', required=True, default=None, help="model inputs (file or folder)")
+flags.DEFINE_string('name', default='curve.csv', help="CSV output file name")
 flags.DEFINE_integer('gpu', default=-1, help='GPU to use')
 
 def get_audio_files(path):
@@ -29,7 +31,7 @@ def get_audio_files(path):
 @torch.no_grad()
 def main(argv):
     torch.set_float32_matmul_precision('high')
-
+    torch.manual_seed(3402)
     cc.use_cached_conv(False)
 
     model_path = FLAGS.model
@@ -74,8 +76,9 @@ def main(argv):
                                 win_length=8192,
                                 hop_ratio=8192//4,
                                 mask_ratio=0)
+    masker = masker.to(device)
     # clean cache
-    _ = model(torch.zeros(1,1,2**16))
+    _ = model(torch.zeros(1,1,2**16).to(device))
     progress_bar = tqdm.tqdm(audio_files)
 
     audios = []
@@ -95,7 +98,6 @@ def main(argv):
             else:
                 print('[Warning] file %s has %d channels, but model has %d channels ; skipping'%(f, model.n_channels))
         
-        x = x.to(device)
         audios.append(x)
 
     batches = []
@@ -104,27 +106,38 @@ def main(argv):
             # Split all but remove the last one that is not of 131072
             batches.extend(torch.split(a,split_size_or_sections=131072,dim=-1)[0:-1])
     batches = torch.cat(batches,dim=0)
-    batch_size = 4
+    batch_size = 1
     batches = torch.split(batches,split_size_or_sections=batch_size,dim=0)
     if batches[-1].shape[0] != batch_size:
         batches = batches[0:-1]
 
     thresholds = [0,0.001,0.002,0.005,0.01,0.02,0.05,0.1,0.2,0.5,1]
     # Compute at different threshold levels
+    # Compute at different threshold levels
     distances = []
+    d = [] #batch_wise distances
     for t in thresholds:
         for audio in batches:
+            audio = audio.to(device)
             masker.mask_ratio = t
             x = masker(audio)
-            print(f'Masker {x.shape}')
+            #print(f'Masker {x.shape}')
             out = model.forward(x[None])
-            print(f'Output {out.shape}')
-            distance = model.audio_distance(out,audio.unsqueeze(1))['spectral_distance']
-            print('Distance ',distance)
-            distances.append(distance)
-        d = torch.mean(torch.tensor(distances))
+            #print(f'Output {out.shape}')
+            l = model.audio_distance(out,audio.unsqueeze(1))['spectral_distance']
+            #print('Distance ',distance)
+            d.append(l)
+        d = torch.mean(torch.tensor(d))
         print(f'Threshold {t} Distance ',d)
-        distances = []
+        distances.append(d.item())
+        d = []
+
+    distances = torch.tensor(distances)
+    curve_csv = torch.stack([torch.tensor(thresholds),distances])
+    print(curve_csv)
+    curve_csv = curve_csv.numpy()
+    numpy.savetxt(FLAGS.name,curve_csv,delimiter = ',')
+
     # save table of results as file and plot image
     #out_path = re.sub(d, "", f)
     #out_path = os.path.join(FLAGS.out_path, f)
