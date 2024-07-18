@@ -95,16 +95,19 @@ def main(argv):
             else:
                 print('[Warning] file %s has %d channels, but model has %d channels ; skipping'%(f, model.n_channels))
         
-        # Crop audio for length to be multiple of 2048 (maximum compression ratio)
-        x = x[:,x.shape[1]%2048:]
         x = x.to(device)
         audios.append(x)
 
     batches = []
     for a in audios:
         if a.shape[-1] > 131072:
-            batches.extend(torch.split(a,split_size_or_sections=131072,dim=-1))
-    
+            # Split all but remove the last one that is not of 131072
+            batches.extend(torch.split(a,split_size_or_sections=131072,dim=-1)[0:-1])
+    batches = torch.cat(batches,dim=0)
+    batch_size = 4
+    batches = torch.split(batches,split_size_or_sections=batch_size,dim=0)
+    if batches[-1].shape[0] != batch_size:
+        batches = batches[0:-1]
 
     thresholds = [0,0.001,0.002,0.005,0.01,0.02,0.05,0.1,0.2,0.5,1]
     # Compute at different threshold levels
