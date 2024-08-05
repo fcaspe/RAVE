@@ -17,7 +17,7 @@ except:
 FLAGS = flags.FLAGS
 flags.DEFINE_string('model', required=True, default=None, help="model path")
 #flags.DEFINE_multi_string('input', required=True, default=None, help="model inputs (file or folder)")
-#flags.DEFINE_string('name', default='curve.csv', help="CSV output file name")
+flags.DEFINE_string('name', default='noname', help="Results name")
 flags.DEFINE_integer('gpu', default=-1, help='GPU to use')
 
 def get_audio_files(path):
@@ -67,7 +67,7 @@ def main(argv):
     
     wrapper = NeuralLatencyModelWrapper()
     def eval_reset():
-        x = torch.zeros(1,1,1024*64)
+        x = torch.zeros(1,1,1024*64).to(model.device)
         model(x)
     def eval_forward(x):
         return model(x)
@@ -80,7 +80,7 @@ def main(argv):
     wrapper.samplerate = samplerate
     wrapper.current_device = current_device
 
-    evaluator = NeuralLatencyEvaluator(wrapper,'test')
+    evaluator = NeuralLatencyEvaluator(wrapper,FLAGS.name)
     evaluator.evaluate()
 
 if __name__ == "__main__": 
